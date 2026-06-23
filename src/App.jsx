@@ -306,12 +306,41 @@ const Select = ({ value, onChange, options, style }) => (
 export default function App() {
   // ── Core State
   const [shoots, setShoots] = useState(() => {
-    const saved = loadFromLS(LS_KEY, null);
-    return saved ? reviveShoots(saved) : INITIAL;
+    try {
+      const saved = localStorage.getItem("ajayi_shoots");
+      return saved ? JSON.parse(saved) : INITIAL;
+    } catch (e) {
+      return INITIAL;
+    }
   });
-  const [expanded, setExpanded] = useState(() => loadFromLS(LS_UI_KEY, {}).expanded || null);
-  const [activeTab, setActiveTab] = useState(() => loadFromLS(LS_UI_KEY, {}).activeTab || {});
-  const [notifications, setNotifications] = useState(() => reviveNotifs(loadFromLS(LS_NOTIF_KEY, [])));
+
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ajayi_ui");
+      return saved ? JSON.parse(saved)?.expanded || null : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ajayi_ui");
+      return saved ? JSON.parse(saved)?.activeTab || {} : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [notifications, setNotifications] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ajayi_notifications");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [showNotifs, setShowNotifs] = useState(false);
   const [showAddShoot, setShowAddShoot] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(null);
@@ -319,9 +348,32 @@ export default function App() {
   const [editDeadline, setEditDeadline] = useState({});
 
   // ── Search / Sort / Filter
-  const [searchQuery, setSearchQuery] = useState(() => loadFromLS(LS_UI_KEY, {}).searchQuery || "");
-  const [sortBy, setSortBy] = useState(() => loadFromLS(LS_UI_KEY, {}).sortBy || "Newest");
-  const [filterStatus, setFilterStatus] = useState(() => loadFromLS(LS_UI_KEY, {}).filterStatus || "All");
+  const [searchQuery, setSearchQuery] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ajayi_ui");
+      return saved ? JSON.parse(saved)?.searchQuery || "" : "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [sortBy, setSortBy] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ajayi_ui");
+      return saved ? JSON.parse(saved)?.sortBy || "Newest" : "Newest";
+    } catch {
+      return "Newest";
+    }
+  });
+
+  const [filterStatus, setFilterStatus] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ajayi_ui");
+      return saved ? JSON.parse(saved)?.filterStatus || "All" : "All";
+    } catch {
+      return "All";
+    }
+  });
 
   // ── Edit State
   const [editNote, setEditNote] = useState(null);
@@ -329,19 +381,38 @@ export default function App() {
   const [newItem, setNewItem] = useState({});
   const [newMember, setNewMember] = useState({});
   const [showMemberForm, setShowMemberForm] = useState({});
-  const [newShoot, setNewShoot] = useState({ title: "", type: "", status: "Planning", priority: "Medium" });
+  const [newShoot, setNewShoot] = useState({
+    title: "",
+    type: "",
+    status: "Planning",
+    priority: "Medium",
+  });
 
   const importRef = useRef(null);
   const prevPct = useRef({});
   const fileInputRefs = useRef({});
 
   // ── Persist to localStorage
-  useEffect(() => { saveToLS(LS_KEY, shoots); }, [shoots]);
-  useEffect(() => { saveToLS(LS_NOTIF_KEY, notifications); }, [notifications]);
   useEffect(() => {
-    saveToLS(LS_UI_KEY, { expanded, activeTab, searchQuery, sortBy, filterStatus });
-  }, [expanded, activeTab, searchQuery, sortBy, filterStatus]);
+    localStorage.setItem("ajayi_shoots", JSON.stringify(shoots));
+  }, [shoots]);
 
+  useEffect(() => {
+    localStorage.setItem("ajayi_notifications", JSON.stringify(notifications));
+  }, [notifications]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "ajayi_ui",
+      JSON.stringify({
+        expanded,
+        activeTab,
+        searchQuery,
+        sortBy,
+        filterStatus,
+      })
+    );
+  }, [expanded, activeTab, searchQuery, sortBy, filterStatus]);
   // ── Notification helpers
   const pushNotif = useCallback((shootId, shootTitle, message) => {
     setNotifications((prev) =>
