@@ -308,7 +308,7 @@ export default function App() {
   const [shoots, setShoots] = useState(() => {
     try {
       const saved = localStorage.getItem("ajayi_shoots");
-      return saved ? JSON.parse(saved) : INITIAL;
+      return saved ? reviveShoots(JSON.parse(saved)) : INITIAL;
     } catch (e) {
       return INITIAL;
     }
@@ -335,7 +335,7 @@ export default function App() {
   const [notifications, setNotifications] = useState(() => {
     try {
       const saved = localStorage.getItem("ajayi_notifications");
-      return saved ? JSON.parse(saved) : [];
+      return saved ? reviveNotifs(JSON.parse(saved)) : [];
     } catch {
       return [];
     }
@@ -393,25 +393,36 @@ export default function App() {
   const fileInputRefs = useRef({});
 
   // ── Persist to localStorage
+  const [saveError, setSaveError] = useState(null);
+
   useEffect(() => {
-    localStorage.setItem("ajayi_shoots", JSON.stringify(shoots));
+    try {
+      localStorage.setItem("ajayi_shoots", JSON.stringify(shoots));
+      setSaveError(null);
+    } catch (e) {
+      setSaveError("Your changes aren't being saved — your browser is blocking storage (Private Browsing mode, or storage is full).");
+    }
   }, [shoots]);
 
   useEffect(() => {
-    localStorage.setItem("ajayi_notifications", JSON.stringify(notifications));
+    try {
+      localStorage.setItem("ajayi_notifications", JSON.stringify(notifications));
+    } catch (_) {}
   }, [notifications]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "ajayi_ui",
-      JSON.stringify({
-        expanded,
-        activeTab,
-        searchQuery,
-        sortBy,
-        filterStatus,
-      })
-    );
+    try {
+      localStorage.setItem(
+        "ajayi_ui",
+        JSON.stringify({
+          expanded,
+          activeTab,
+          searchQuery,
+          sortBy,
+          filterStatus,
+        })
+      );
+    } catch (_) {}
   }, [expanded, activeTab, searchQuery, sortBy, filterStatus]);
   // ── Notification helpers
   const pushNotif = useCallback((shootId, shootTitle, message) => {
@@ -1247,6 +1258,18 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Save Error Banner */}
+      {saveError && (
+        <div style={{ maxWidth: 720, margin: "0 auto", padding: "10px 20px 0" }}>
+          <div style={{ background: "#2e1a1a", border: "1px solid #f87171", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: "#f87171", flex: 1, minWidth: 200 }}>⚠️ {saveError}</span>
+            <Btn onClick={() => exportData(shoots, notifications)} style={{ background: "#f87171", color: "#2e1a1a", padding: "6px 10px", fontSize: 11 }}>
+              Export backup now
+            </Btn>
+          </div>
+        </div>
+      )}
 
       {/* Notification Drawer */}
       {showNotifs && (
