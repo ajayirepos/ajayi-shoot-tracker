@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Ajayi Shoot Tracker</string>
+    <string name="title_activity_main">Ajayi Shoot Tracker</string>
+    <string name="package_name">com.ajayistudios.shoottracker</string>
+    <string name="custom_url_scheme">com.ajayistudios.shoottracker</string>
+</resources>

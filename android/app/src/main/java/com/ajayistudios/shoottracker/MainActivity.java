@@ -1,0 +1,5 @@
+package com.ajayistudios.shoottracker;
+
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {}
