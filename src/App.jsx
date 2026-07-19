@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { supabase, cloudEnabled } from "./supabaseClient";
 
 // ─── Constants ───────────────────────────────────────────────
 const DEFAULT_CHECKLIST = [
@@ -274,9 +275,10 @@ const Pill = ({ children, style }) => (
   <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 9px", borderRadius: 20, ...style }}>{children}</span>
 );
 
-const Btn = ({ onClick, children, style, danger, success }) => (
-  <button onClick={onClick} style={{
-    border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+const Btn = ({ onClick, children, style, danger, success, disabled }) => (
+  <button onClick={onClick} disabled={disabled} style={{
+    border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600,
+    cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.6 : 1,
     background: danger ? "#2e1a1a" : success ? "#1a2e1a" : "#6366f1",
     color: danger ? "#f87171" : success ? "#4ade80" : "#fff", ...style,
   }}>{children}</button>
@@ -424,6 +426,106 @@ export default function App() {
       );
     } catch (_) {}
   }, [expanded, activeTab, searchQuery, sortBy, filterStatus]);
+
+  // ── Cloud account & sync (optional — app works fully offline if not configured)
+  const [user, setUser] = useState(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authCode, setAuthCode] = useState("");
+  const [authStage, setAuthStage] = useState("email"); // "email" | "code"
+  const [authStatus, setAuthStatus] = useState(null);
+  const [showAuth, setShowAuth] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null); // null | "syncing" | "synced" | "error"
+
+  const cloudLoadedFor = useRef(null);
+  const lastPushedJSON = useRef(null);
+  const pushTimer = useRef(null);
+
+  useEffect(() => {
+    if (!cloudEnabled) return;
+    supabase.auth.getSession().then(({ data }) => setUser(data.session?.user || null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // Pull cloud data on sign-in — cloud wins if it already has a row, otherwise seed cloud from local
+  useEffect(() => {
+    if (!cloudEnabled || !user || cloudLoadedFor.current === user.id) return;
+    cloudLoadedFor.current = user.id;
+    (async () => {
+      setSyncStatus("syncing");
+      const { data, error } = await supabase.from("user_data").select("shoots").eq("id", user.id).maybeSingle();
+      if (error) { setSyncStatus("error"); return; }
+      if (data) {
+        lastPushedJSON.current = JSON.stringify(data.shoots || []);
+        setShoots(reviveShoots(data.shoots || []));
+      } else {
+        const { error: insertErr } = await supabase.from("user_data").insert({ id: user.id, shoots });
+        if (!insertErr) lastPushedJSON.current = JSON.stringify(shoots);
+      }
+      setSyncStatus("synced");
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Push local changes to cloud (debounced), skipping echoes of what we just pulled/pushed
+  useEffect(() => {
+    if (!cloudEnabled || !user || cloudLoadedFor.current !== user.id) return;
+    const json = JSON.stringify(shoots);
+    if (json === lastPushedJSON.current) return;
+    clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(async () => {
+      setSyncStatus("syncing");
+      const { error } = await supabase.from("user_data").update({ shoots }).eq("id", user.id);
+      lastPushedJSON.current = json;
+      setSyncStatus(error ? "error" : "synced");
+    }, 800);
+    return () => clearTimeout(pushTimer.current);
+  }, [shoots, user]);
+
+  // Live updates from other signed-in devices
+  useEffect(() => {
+    if (!cloudEnabled || !user) return;
+    const channel = supabase
+      .channel(`user_data_${user.id}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "user_data", filter: `id=eq.${user.id}` }, (payload) => {
+        const json = JSON.stringify(payload.new.shoots || []);
+        if (json === lastPushedJSON.current) return;
+        lastPushedJSON.current = json;
+        setShoots(reviveShoots(payload.new.shoots || []));
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [user]);
+
+  const sendAuthCode = useCallback(async () => {
+    if (!authEmail.trim()) return;
+    setAuthStatus("sending");
+    const { error } = await supabase.auth.signInWithOtp({ email: authEmail.trim() });
+    if (error) { setAuthStatus(error.message); return; }
+    setAuthStage("code");
+    setAuthStatus(null);
+  }, [authEmail]);
+
+  const verifyAuthCode = useCallback(async () => {
+    if (!authCode.trim()) return;
+    setAuthStatus("verifying");
+    const { error } = await supabase.auth.verifyOtp({ email: authEmail.trim(), token: authCode.trim(), type: "email" });
+    if (error) { setAuthStatus(error.message); return; }
+    setShowAuth(false);
+    setAuthStage("email");
+    setAuthEmail("");
+    setAuthCode("");
+    setAuthStatus(null);
+  }, [authEmail, authCode]);
+
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+    cloudLoadedFor.current = null;
+    lastPushedJSON.current = null;
+  }, []);
+
   // ── Notification helpers
   const pushNotif = useCallback((shootId, shootTitle, message) => {
     setNotifications((prev) =>
@@ -1245,6 +1347,17 @@ export default function App() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+            {cloudEnabled && (
+              user ? (
+                <button onClick={signOut} title={`Signed in as ${user.email} · tap to sign out`}
+                  style={{ background: "#16162a", border: "1px solid #1e1e3a", borderRadius: 10, padding: "7px 10px", cursor: "pointer", color: syncStatus === "error" ? "#f87171" : "#4ade80", fontSize: 13 }}>
+                  {syncStatus === "syncing" ? "☁️…" : "☁️✓"}
+                </button>
+              ) : (
+                <button onClick={() => setShowAuth(true)} title="Sign in to sync across devices"
+                  style={{ background: "#16162a", border: "1px solid #1e1e3a", borderRadius: 10, padding: "7px 10px", cursor: "pointer", color: "#64748b", fontSize: 13 }}>☁️</button>
+              )
+            )}
             <button onClick={() => exportData(shoots, notifications)} title="Export backup"
               style={{ background: "#16162a", border: "1px solid #1e1e3a", borderRadius: 10, padding: "7px 10px", cursor: "pointer", color: "#64748b", fontSize: 13 }}>⬇</button>
             <button onClick={() => importRef.current?.click()} title="Import backup"
@@ -1309,6 +1422,52 @@ export default function App() {
             options={SORT_OPTIONS} style={{ minWidth: 120 }} />
         </div>
       </div>
+
+      {/* Auth Modal */}
+      {showAuth && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={() => setShowAuth(false)}>
+          <div style={{ background: "#10101e", border: "1px solid #6366f1", borderRadius: 16, padding: 24, width: "100%", maxWidth: 360 }}
+            onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700 }}>Sync your shoots</h2>
+            <p style={{ margin: "0 0 16px", fontSize: 12, color: "#94a3b8" }}>
+              Sign in with your email to back up and sync across devices.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {authStage === "email" ? (
+                <>
+                  <Input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} type="email"
+                    placeholder="you@example.com" style={{ width: "100%", boxSizing: "border-box" }} />
+                  <Btn onClick={sendAuthCode} style={{ width: "100%" }} disabled={authStatus === "sending"}>
+                    {authStatus === "sending" ? "Sending…" : "Send code"}
+                  </Btn>
+                </>
+              ) : (
+                <>
+                  <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
+                    Enter the 6-digit code sent to {authEmail}
+                  </p>
+                  <Input value={authCode} onChange={(e) => setAuthCode(e.target.value)} type="text"
+                    placeholder="123456" style={{ width: "100%", boxSizing: "border-box" }} />
+                  <Btn onClick={verifyAuthCode} style={{ width: "100%" }} disabled={authStatus === "verifying"}>
+                    {authStatus === "verifying" ? "Verifying…" : "Verify & sign in"}
+                  </Btn>
+                  <button onClick={() => { setAuthStage("email"); setAuthStatus(null); }}
+                    style={{ background: "none", border: "none", color: "#64748b", fontSize: 11, cursor: "pointer", padding: 0 }}>
+                    ← use a different email
+                  </button>
+                </>
+              )}
+              {authStatus && authStatus !== "sending" && authStatus !== "verifying" && (
+                <p style={{ margin: 0, fontSize: 11, color: "#f87171" }}>{authStatus}</p>
+              )}
+              <Btn onClick={() => setShowAuth(false)} style={{ width: "100%", background: "#16162a", color: "#94a3b8" }}>
+                Cancel
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Shoot Modal */}
       {showAddShoot && (
